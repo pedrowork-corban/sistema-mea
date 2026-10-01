@@ -87,6 +87,25 @@ export interface Contato {
   proxima_acao: string | null;
   proxima_acao_tipo: TipoInteracao | null;
   obs: string | null;
+
+  /* Dados para gravação do consórcio na administradora. */
+  cnpj: string | null;
+  rg: string | null;
+  rg_emissor: string | null;
+  data_nascimento: string | null;
+  naturalidade: string | null;
+  profissao: string | null;
+  banco: string | null;
+  agencia: string | null;
+  conta: string | null;
+  cep: string | null;
+  logradouro: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  endereco_cidade: string | null;
+  uf: string | null;
+
   tags: string[];
   arquivado: boolean;
   ordem: number;

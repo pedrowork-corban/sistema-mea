@@ -9,6 +9,68 @@ export function hoje(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/* ------------------------- documentos e endereço -------------------------- */
+
+const digitos = (v: string) => v.replace(/\D/g, "");
+
+/** Formata enquanto digita: 000.000.000-00. Corta o que passar de 11 dígitos. */
+export function mascaraCpf(v: string): string {
+  const d = digitos(v).slice(0, 11);
+  return d
+    .replace(/^(\d{3})(\d)/, "$1.$2")
+    .replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3")
+    .replace(/\.(\d{3})(\d{1,2})$/, ".$1-$2");
+}
+
+/** Formata enquanto digita: 00.000.000/0000-00. */
+export function mascaraCnpj(v: string): string {
+  const d = digitos(v).slice(0, 14);
+  return d
+    .replace(/^(\d{2})(\d)/, "$1.$2")
+    .replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3")
+    .replace(/\.(\d{3})(\d)/, ".$1/$2")
+    .replace(/(\d{4})(\d{1,2})$/, "$1-$2");
+}
+
+/** Formata enquanto digita: 00000-000. */
+export function mascaraCep(v: string): string {
+  const d = digitos(v).slice(0, 8);
+  return d.replace(/^(\d{5})(\d)/, "$1-$2");
+}
+
+/**
+ * Valida CPF pelos dois dígitos verificadores.
+ * Pega erro de digitação antes de ir pra administradora, que recusa o cadastro.
+ */
+export function cpfValido(v: string): boolean {
+  const d = digitos(v);
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  const dv = (ate: number) => {
+    let soma = 0;
+    for (let i = 0; i < ate; i++) soma += Number(d[i]) * (ate + 1 - i);
+    const r = (soma * 10) % 11;
+    return r === 10 ? 0 : r;
+  };
+  return dv(9) === Number(d[9]) && dv(10) === Number(d[10]);
+}
+
+/** Valida CNPJ pelos dois dígitos verificadores. */
+export function cnpjValido(v: string): boolean {
+  const d = digitos(v);
+  if (d.length !== 14 || /^(\d)\1{13}$/.test(d)) return false;
+  const dv = (ate: number) => {
+    let peso = ate - 7;
+    let soma = 0;
+    for (let i = 0; i < ate; i++) {
+      soma += Number(d[i]) * peso;
+      peso = peso === 2 ? 9 : peso - 1;
+    }
+    const r = soma % 11;
+    return r < 2 ? 0 : 11 - r;
+  };
+  return dv(12) === Number(d[12]) && dv(13) === Number(d[13]);
+}
+
 export function formatarData(iso?: string | null): string {
   if (!iso) return "—";
   const [a, m, d] = iso.slice(0, 10).split("-");

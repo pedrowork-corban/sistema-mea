@@ -1,5 +1,6 @@
 import * as React from "react";
-import { MessageCircle, Phone, Plus, Trash2, X } from "lucide-react";
+import { Copy, MessageCircle, Phone, Plus, Trash2, X } from "lucide-react";
+import { toast } from "sonner";
 import {
   useEtapas,
   useExcluirContato,
@@ -13,7 +14,20 @@ import { useAuth } from "@/contexts/AuthContext";
 import type { Contato, Temperatura, TipoInteracao } from "@/lib/types";
 import { INTERESSES, TEMPERATURAS, TIPOS_INTERACAO } from "@/lib/types";
 import { Botao, Campo, Input, Select, Selo, Textarea } from "@/components/ui";
-import { cn, formatarDataHora, hoje, linkWhatsapp, moeda } from "@/lib/utils";
+import { copiarTexto } from "@/lib/exportar";
+import {
+  cn,
+  cnpjValido,
+  cpfValido,
+  formatarData,
+  formatarDataHora,
+  hoje,
+  linkWhatsapp,
+  mascaraCep,
+  mascaraCnpj,
+  mascaraCpf,
+  moeda,
+} from "@/lib/utils";
 
 export default function FichaContato({
   contato,
@@ -31,7 +45,7 @@ export default function FichaContato({
   const excluir = useExcluirContato();
   const registrar = useRegistrarInteracao();
 
-  const [aba, setAba] = React.useState<"dados" | "historico">("dados");
+  const [aba, setAba] = React.useState<"dados" | "gravacao" | "historico">("dados");
   const [form, setForm] = React.useState<Contato>(contato);
   React.useEffect(() => setForm(contato), [contato]);
 
@@ -64,6 +78,25 @@ export default function FichaContato({
       proxima_acao_em: form.proxima_acao_em || null,
       proxima_acao: form.proxima_acao || null,
       obs: form.obs || null,
+
+      /* dados para gravação */
+      cpf: form.cpf || null,
+      cnpj: form.cnpj || null,
+      rg: form.rg || null,
+      rg_emissor: form.rg_emissor || null,
+      data_nascimento: form.data_nascimento || null,
+      naturalidade: form.naturalidade || null,
+      profissao: form.profissao || null,
+      banco: form.banco || null,
+      agencia: form.agencia || null,
+      conta: form.conta || null,
+      cep: form.cep || null,
+      logradouro: form.logradouro || null,
+      numero: form.numero || null,
+      complemento: form.complemento || null,
+      bairro: form.bairro || null,
+      endereco_cidade: form.endereco_cidade || null,
+      uf: form.uf || null,
     });
   }
 
@@ -140,18 +173,24 @@ export default function FichaContato({
 
         {/* abas */}
         <div className="flex gap-1 border-b border-border px-5">
-          {(["dados", "historico"] as const).map((a) => (
+          {(
+            [
+              { chave: "dados", rotulo: "Dados" },
+              { chave: "gravacao", rotulo: "Dados para gravação" },
+              { chave: "historico", rotulo: `Histórico (${interacoes.length})` },
+            ] as const
+          ).map((a) => (
             <button
-              key={a}
-              onClick={() => setAba(a)}
+              key={a.chave}
+              onClick={() => setAba(a.chave)}
               className={cn(
-                "-mb-px border-b-2 px-2 py-2.5 text-xs font-medium transition-colors",
-                aba === a
+                "-mb-px whitespace-nowrap border-b-2 px-2 py-2.5 text-xs font-medium transition-colors",
+                aba === a.chave
                   ? "border-primary text-foreground"
                   : "border-transparent text-muted-foreground hover:text-foreground",
               )}
             >
-              {a === "dados" ? "Dados" : `Histórico (${interacoes.length})`}
+              {a.rotulo}
             </button>
           ))}
         </div>
@@ -285,6 +324,8 @@ export default function FichaContato({
                 />
               </Campo>
             </div>
+          ) : aba === "gravacao" ? (
+            <DadosGravacao form={form} set={set} editavel={editavel} />
           ) : (
             <div className="flex flex-col gap-4">
               {editavel && (
@@ -354,7 +395,7 @@ export default function FichaContato({
           )}
         </div>
 
-        {aba === "dados" && editavel && (
+        {aba !== "historico" && editavel && (
           <footer className="flex items-center gap-2 border-t border-border px-5 py-3">
             <Botao onClick={salvarDados} carregando={salvar.isPending} className="flex-1">
               Salvar alterações
@@ -375,6 +416,289 @@ export default function FichaContato({
           </footer>
         )}
       </aside>
+    </div>
+  );
+}
+
+/* ------------------------- Dados para gravação ---------------------------- */
+
+const UFS = [
+  "AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB",
+  "PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO",
+] as const;
+
+/** Bloco de texto pronto para colar na proposta ou mandar pro back office. */
+function fichaEmTexto(c: Contato): string {
+  const l: string[] = [`*${c.nome}*`];
+  const add = (r: string, v?: string | null) => v && l.push(`${r}: ${v}`);
+
+  add("CPF", c.cpf);
+  add("CNPJ", c.cnpj);
+  add("RG", [c.rg, c.rg_emissor].filter(Boolean).join(" / "));
+  add("Nascimento", c.data_nascimento ? formatarData(c.data_nascimento) : null);
+  add("Naturalidade", c.naturalidade);
+  add("Profissão", c.profissao);
+  add("Telefone", c.telefone);
+  add("E-mail", c.email);
+
+  const banco = [c.banco && `Banco ${c.banco}`, c.agencia && `Ag. ${c.agencia}`, c.conta && `C/C ${c.conta}`]
+    .filter(Boolean)
+    .join(" · ");
+  if (banco) l.push("", "*Conta para débito*", banco);
+
+  const rua = [c.logradouro, c.numero].filter(Boolean).join(", ");
+  const endereco = [
+    [rua, c.complemento].filter(Boolean).join(" - "),
+    c.bairro,
+    [c.endereco_cidade, c.uf].filter(Boolean).join("/"),
+    c.cep,
+  ].filter((v): v is string => Boolean(v));
+  if (endereco.length) l.push("", "*Endereço*", ...endereco);
+
+  return l.join("\n");
+}
+
+function Secao({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {titulo}
+      </h3>
+      <div className="grid grid-cols-6 gap-3">{children}</div>
+    </section>
+  );
+}
+
+function DadosGravacao({
+  form,
+  set,
+  editavel,
+}: {
+  form: Contato;
+  set: <K extends keyof Contato>(k: K, v: Contato[K]) => void;
+  editavel: boolean;
+}) {
+  const [buscandoCep, setBuscandoCep] = React.useState(false);
+
+  // Só reclama com o documento completo — avisar a cada tecla seria ruído.
+  const erroCpf =
+    form.cpf && form.cpf.replace(/\D/g, "").length === 11 && !cpfValido(form.cpf)
+      ? "CPF inválido — confira os números."
+      : undefined;
+  const erroCnpj =
+    form.cnpj && form.cnpj.replace(/\D/g, "").length === 14 && !cnpjValido(form.cnpj)
+      ? "CNPJ inválido — confira os números."
+      : undefined;
+
+  /** Preenche o endereço pelo CEP. Se falhar, o usuário digita na mão. */
+  async function buscarCep(valor: string) {
+    const d = valor.replace(/\D/g, "");
+    if (d.length !== 8) return;
+    setBuscandoCep(true);
+    try {
+      const r = await fetch(`https://viacep.com.br/ws/${d}/json/`);
+      const j = (await r.json()) as {
+        erro?: boolean;
+        logradouro?: string;
+        bairro?: string;
+        localidade?: string;
+        uf?: string;
+      };
+      if (j.erro) {
+        toast.error("CEP não encontrado.");
+        return;
+      }
+      if (j.logradouro) set("logradouro", j.logradouro);
+      if (j.bairro) set("bairro", j.bairro);
+      if (j.localidade) set("endereco_cidade", j.localidade);
+      if (j.uf) set("uf", j.uf);
+    } catch {
+      toast.error("Não deu para buscar o CEP. Preencha o endereço na mão.");
+    } finally {
+      setBuscandoCep(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <p className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs text-muted-foreground">
+        Dados que a administradora pede na hora de gravar a cota. Preencha o que já
+        tiver — nada aqui é obrigatório.
+      </p>
+
+      <Secao titulo="Documentos">
+        <Campo label="CPF" erro={erroCpf} className="col-span-3">
+          <Input
+            value={form.cpf ?? ""}
+            onChange={(e) => set("cpf", mascaraCpf(e.target.value))}
+            placeholder="000.000.000-00"
+            inputMode="numeric"
+            disabled={!editavel}
+          />
+        </Campo>
+        <Campo label="CNPJ" hint="Se a cota for em nome da empresa." erro={erroCnpj} className="col-span-3">
+          <Input
+            value={form.cnpj ?? ""}
+            onChange={(e) => set("cnpj", mascaraCnpj(e.target.value))}
+            placeholder="00.000.000/0000-00"
+            inputMode="numeric"
+            disabled={!editavel}
+          />
+        </Campo>
+        <Campo label="RG" className="col-span-3">
+          <Input value={form.rg ?? ""} onChange={(e) => set("rg", e.target.value)} disabled={!editavel} />
+        </Campo>
+        <Campo label="Órgão emissor" className="col-span-3">
+          <Input
+            value={form.rg_emissor ?? ""}
+            onChange={(e) => set("rg_emissor", e.target.value)}
+            placeholder="SSP/MG"
+            disabled={!editavel}
+          />
+        </Campo>
+      </Secao>
+
+      <Secao titulo="Dados pessoais">
+        <Campo label="Data de nascimento" className="col-span-3">
+          <Input
+            type="date"
+            value={form.data_nascimento ?? ""}
+            max={hoje()}
+            onChange={(e) => set("data_nascimento", e.target.value || null)}
+            disabled={!editavel}
+          />
+        </Campo>
+        <Campo label="Naturalidade" hint="Cidade onde nasceu." className="col-span-3">
+          <Input
+            value={form.naturalidade ?? ""}
+            onChange={(e) => set("naturalidade", e.target.value)}
+            placeholder="Belo Horizonte/MG"
+            disabled={!editavel}
+          />
+        </Campo>
+        <Campo label="Profissão" className="col-span-3">
+          <Input
+            value={form.profissao ?? ""}
+            onChange={(e) => set("profissao", e.target.value)}
+            disabled={!editavel}
+          />
+        </Campo>
+        <Campo label="E-mail" className="col-span-3">
+          <Input
+            type="email"
+            value={form.email ?? ""}
+            onChange={(e) => set("email", e.target.value)}
+            placeholder="cliente@email.com"
+            disabled={!editavel}
+          />
+        </Campo>
+      </Secao>
+
+      <Secao titulo="Conta para débito das parcelas">
+        <Campo label="Banco" className="col-span-2">
+          <Input
+            value={form.banco ?? ""}
+            onChange={(e) => set("banco", e.target.value)}
+            placeholder="Banco do Brasil"
+            disabled={!editavel}
+          />
+        </Campo>
+        <Campo label="Agência" className="col-span-2">
+          <Input
+            value={form.agencia ?? ""}
+            onChange={(e) => set("agencia", e.target.value)}
+            placeholder="0000-0"
+            disabled={!editavel}
+          />
+        </Campo>
+        <Campo label="Conta" className="col-span-2">
+          <Input
+            value={form.conta ?? ""}
+            onChange={(e) => set("conta", e.target.value)}
+            placeholder="00000-0"
+            disabled={!editavel}
+          />
+        </Campo>
+      </Secao>
+
+      <Secao titulo="Endereço">
+        <Campo
+          label="CEP"
+          hint={buscandoCep ? "Buscando..." : "Busca o endereço."}
+          className="col-span-2"
+        >
+          <Input
+            value={form.cep ?? ""}
+            onChange={(e) => {
+              const v = mascaraCep(e.target.value);
+              set("cep", v);
+              void buscarCep(v);
+            }}
+            placeholder="00000-000"
+            inputMode="numeric"
+            disabled={!editavel}
+          />
+        </Campo>
+        <Campo label="Logradouro" className="col-span-4">
+          <Input
+            value={form.logradouro ?? ""}
+            onChange={(e) => set("logradouro", e.target.value)}
+            placeholder="Rua, avenida..."
+            disabled={!editavel}
+          />
+        </Campo>
+        <Campo label="Número" className="col-span-2">
+          <Input
+            value={form.numero ?? ""}
+            onChange={(e) => set("numero", e.target.value)}
+            disabled={!editavel}
+          />
+        </Campo>
+        <Campo label="Complemento" className="col-span-4">
+          <Input
+            value={form.complemento ?? ""}
+            onChange={(e) => set("complemento", e.target.value)}
+            placeholder="Apto 101, bloco B"
+            disabled={!editavel}
+          />
+        </Campo>
+        <Campo label="Bairro" className="col-span-2">
+          <Input
+            value={form.bairro ?? ""}
+            onChange={(e) => set("bairro", e.target.value)}
+            disabled={!editavel}
+          />
+        </Campo>
+        <Campo label="Cidade" className="col-span-2">
+          <Input
+            value={form.endereco_cidade ?? ""}
+            onChange={(e) => set("endereco_cidade", e.target.value)}
+            disabled={!editavel}
+          />
+        </Campo>
+        <Campo label="UF" className="col-span-2">
+          <Select value={form.uf ?? ""} onChange={(e) => set("uf", e.target.value || null)} disabled={!editavel}>
+            <option value="">—</option>
+            {UFS.map((u) => (
+              <option key={u} value={u}>{u}</option>
+            ))}
+          </Select>
+        </Campo>
+      </Secao>
+
+      <Botao
+        variante="contorno"
+        tamanho="sm"
+        onClick={async () => {
+          const ok = await copiarTexto(fichaEmTexto(form));
+          toast[ok ? "success" : "error"](
+            ok ? "Ficha copiada." : "Seu navegador bloqueou a cópia.",
+          );
+        }}
+      >
+        <Copy className="h-3.5 w-3.5" />
+        Copiar ficha
+      </Botao>
     </div>
   );
 }
