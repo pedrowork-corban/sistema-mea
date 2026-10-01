@@ -124,6 +124,8 @@ export interface Interacao {
   resumo: string;
   etapa_antes: string | null;
   etapa_depois: string | null;
+  /** Gerada pelo sistema na mudança de etapa — não conta como atividade. */
+  automatica: boolean;
 }
 
 /* ------------------------- Simulador e carteira --------------------------- */

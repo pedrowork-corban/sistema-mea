@@ -2,6 +2,7 @@ import * as React from "react";
 import { NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import {
   Calculator,
+  ChartNoAxesColumn,
   LayoutGrid,
   ListChecks,
   LogOut,
@@ -28,6 +29,7 @@ interface ItemMenu {
 }
 
 const MENU: ItemMenu[] = [
+  { para: "/painel", rotulo: "Painel", icone: ChartNoAxesColumn, permissao: "crm.ver" },
   { para: "/crm", rotulo: "CRM", icone: LayoutGrid, permissao: "crm.ver" },
   { para: "/hoje", rotulo: "Meu dia", icone: ListChecks, permissao: "crm.ver" },
   { para: "/simulador", rotulo: "Simulador", icone: Calculator, permissao: "simulador.usar" },

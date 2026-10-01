@@ -83,6 +83,29 @@ export function useInteracoes(contatoId?: string) {
   });
 }
 
+/**
+ * Todas as interações da org, para o painel.
+ *
+ * Query separada da `useInteracoes` (que é por contato) porque o painel precisa
+ * cruzar o histórico inteiro. O limite alto é proposital: com o volume da M&A
+ * cabe tudo numa ida só, e paginar aqui atrapalharia a conta de conversão.
+ */
+export function useTodasInteracoes() {
+  return useQuery({
+    queryKey: ["interacoes-todas"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("interacoes")
+        .select("*")
+        .order("data", { ascending: false })
+        .limit(5000);
+      if (error) throw error;
+      return data as Interacao[];
+    },
+    staleTime: 60_000,
+  });
+}
+
 export function useSalvarContato() {
   const qc = useQueryClient();
   const { usuario } = useAuth();
@@ -138,7 +161,11 @@ export function useMoverEtapa() {
       if (ctx?.antes) qc.setQueryData(["contatos"], ctx.antes);
       toast.error(msgErro(e));
     },
-    onSettled: () => void qc.invalidateQueries({ queryKey: ["contatos"] }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ["contatos"] });
+      // O trigger do banco grava a movimentação; o painel precisa relê-la.
+      void qc.invalidateQueries({ queryKey: ["interacoes-todas"] });
+    },
   });
 }
 
@@ -220,6 +247,7 @@ export function useRegistrarInteracao() {
     },
     onSuccess: (_d, v) => {
       void qc.invalidateQueries({ queryKey: ["interacoes", v.contato_id] });
+      void qc.invalidateQueries({ queryKey: ["interacoes-todas"] });
       void qc.invalidateQueries({ queryKey: ["contatos"] });
       toast.success("Interação registrada.");
     },

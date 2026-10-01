@@ -4,6 +4,7 @@ import { Toaster } from "sonner";
 import { AuthProvider } from "@/contexts/AuthContext";
 import Layout, { Protegido } from "@/components/Layout";
 import Login from "@/pages/Login";
+import Painel from "@/pages/Painel";
 import Crm from "@/pages/Crm";
 import Hoje from "@/pages/Hoje";
 import Usuarios from "@/pages/Usuarios";
@@ -25,7 +26,15 @@ export default function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route element={<Layout />}>
-              <Route index element={<Navigate to="/crm" replace />} />
+              <Route index element={<Navigate to="/painel" replace />} />
+              <Route
+                path="/painel"
+                element={
+                  <Protegido permissao="crm.ver">
+                    <Painel />
+                  </Protegido>
+                }
+              />
               <Route
                 path="/crm"
                 element={
@@ -75,7 +84,7 @@ export default function App() {
                 }
               />
             </Route>
-            <Route path="*" element={<Navigate to="/crm" replace />} />
+            <Route path="*" element={<Navigate to="/painel" replace />} />
           </Routes>
         </BrowserRouter>
         <Toaster position="top-right" richColors closeButton />
