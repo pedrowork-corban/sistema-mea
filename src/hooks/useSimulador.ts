@@ -179,6 +179,25 @@ export function useImportarCotas() {
   });
 }
 
+/**
+ * Edição em massa. Um update só com `in (ids)` em vez de um por cota: o banco
+ * resolve de uma vez e não existe o estado meio-salvo de metade da seleção.
+ */
+export function useEditarCotasEmMassa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ ids, patch }: { ids: string[]; patch: Partial<Cota> }) => {
+      const { error } = await supabase.from("cotas").update(patch).in("id", ids);
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ["cotas"] });
+      toast.success(`${v.ids.length} cota(s) atualizada(s).`);
+    },
+    onError: (e) => toast.error(msgErro(e)),
+  });
+}
+
 export function useExcluirCota() {
   const qc = useQueryClient();
   return useMutation({

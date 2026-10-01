@@ -191,6 +191,8 @@ export interface Cota {
   prazo_meses: number;
   parcela: number | null;
   parcelas_pagas: number;
+  /** Parcelas pagas para fechar a comissão. Nulo = padrão do segmento. */
+  parcelas_comissao: number | null;
   data_venda: string;
   status: StatusCota;
   contemplada_em: string | null;
@@ -200,12 +202,28 @@ export interface Cota {
   criado_em: string;
 }
 
-export const SEGMENTOS: { valor: Segmento; rotulo: string; bem: string }[] = [
-  { valor: "imovel", rotulo: "Imóvel", bem: "Imóvel" },
-  { valor: "auto", rotulo: "Automóvel", bem: "Veículo" },
-  { valor: "pesado", rotulo: "Pesados", bem: "Veículo pesado" },
-  { valor: "servico", rotulo: "Serviços", bem: "Serviços" },
+/**
+ * `comissao` = parcelas pagas que fecham a comissão da administradora. Imóvel
+ * paga em 12, o resto em 7. É só o padrão: cada cota pode ter o seu número.
+ */
+export const SEGMENTOS: { valor: Segmento; rotulo: string; bem: string; comissao: number }[] = [
+  { valor: "imovel", rotulo: "Imóvel", bem: "Imóvel", comissao: 12 },
+  { valor: "auto", rotulo: "Automóvel", bem: "Veículo", comissao: 7 },
+  { valor: "pesado", rotulo: "Pesados", bem: "Veículo pesado", comissao: 7 },
+  { valor: "servico", rotulo: "Serviços", bem: "Serviços", comissao: 7 },
 ];
+
+/** Quantas parcelas essa cota precisa pagar para a comissão fechar. */
+export function parcelasComissao(c: Pick<Cota, "segmento" | "parcelas_comissao">): number {
+  return c.parcelas_comissao ?? SEGMENTOS.find((s) => s.valor === c.segmento)?.comissao ?? 7;
+}
+
+/** A comissão daquele cliente já caiu inteira? */
+export function comissaoFechada(
+  c: Pick<Cota, "segmento" | "parcelas_comissao" | "parcelas_pagas">,
+): boolean {
+  return c.parcelas_pagas >= parcelasComissao(c);
+}
 
 export const STATUS_COTA: { valor: StatusCota; rotulo: string; classe: string }[] = [
   { valor: "ativa", rotulo: "Ativa", classe: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200" },

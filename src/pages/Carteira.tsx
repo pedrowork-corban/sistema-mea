@@ -1,10 +1,26 @@
 import * as React from "react";
-import { Download, Pencil, Plus, Search, Trash2, Upload, Wallet } from "lucide-react";
+import {
+  CheckCircle2,
+  Circle,
+  Download,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  Upload,
+  Wallet,
+} from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useContatos, useUsuarios } from "@/hooks/useCrm";
-import { useCotas, useExcluirCota, useImportarCotas, useSalvarCota } from "@/hooks/useSimulador";
+import {
+  useCotas,
+  useEditarCotasEmMassa,
+  useExcluirCota,
+  useImportarCotas,
+  useSalvarCota,
+} from "@/hooks/useSimulador";
 import type { Cota, FormaContemplacao, Segmento, StatusCota } from "@/lib/types";
-import { SEGMENTOS, STATUS_COTA } from "@/lib/types";
+import { comissaoFechada, parcelasComissao, SEGMENTOS, STATUS_COTA } from "@/lib/types";
 import { baixarModeloCarteira, importarCarteira, type LinhaImportada } from "@/lib/planilha";
 import {
   Botao,
@@ -31,6 +47,7 @@ const VAZIA: Partial<Cota> = {
   prazo_meses: 80,
   parcela: null,
   parcelas_pagas: 0,
+  parcelas_comissao: null,
   status: "ativa",
   obs: "",
 };
@@ -56,6 +73,7 @@ function EditorCota({
   if (!cota) return null;
   const set = <K extends keyof Cota>(k: K, v: Cota[K]) => setC((p) => ({ ...p, [k]: v }));
   const contemplada = c.status === "contemplada";
+  const padraoSegmento = SEGMENTOS.find((s) => s.valor === (c.segmento ?? "auto"))?.comissao ?? 7;
 
   function enviar(e: React.FormEvent) {
     e.preventDefault();
@@ -149,7 +167,7 @@ function EditorCota({
               required
             />
           </Campo>
-          <Campo label="Parcela">
+          <Campo label="Parcela" hint="Opcional — deixe em branco se ainda não souber.">
             <Input
               type="number"
               min={0}
@@ -177,6 +195,24 @@ function EditorCota({
               min={0}
               value={c.parcelas_pagas ?? 0}
               onChange={(e) => set("parcelas_pagas", Number(e.target.value))}
+              className="font-num"
+            />
+          </Campo>
+
+          <Campo
+            label="Parcelas para fechar a comissão"
+            className="sm:col-span-2"
+            hint={`Quando as parcelas pagas chegarem aqui, a cota aparece com o visto de comissão paga. Em branco usa o padrão do segmento: ${padraoSegmento} parcela(s).`}
+          >
+            <Input
+              type="number"
+              min={1}
+              max={300}
+              placeholder={String(padraoSegmento)}
+              value={c.parcelas_comissao ?? ""}
+              onChange={(e) =>
+                set("parcelas_comissao", e.target.value ? Number(e.target.value) : null)
+              }
               className="font-num"
             />
           </Campo>
@@ -378,6 +414,182 @@ function ImportarPlanilha({ aoFechar }: { aoFechar: () => void }) {
   );
 }
 
+/* ------------------------------ Edição em massa --------------------------- */
+
+/**
+ * Edita várias cotas de uma vez. Só vai para o banco o campo que foi marcado —
+ * a alternativa (mandar o formulário inteiro) apagaria o vendedor de todo mundo
+ * só porque alguém queria mudar a situação.
+ */
+function EdicaoEmMassa({
+  ids,
+  aoFechar,
+}: {
+  ids: string[];
+  aoFechar: (limparSelecao: boolean) => void;
+}) {
+  const { pode } = useAuth();
+  const { data: usuarios = [] } = useUsuarios();
+  const emMassa = useEditarCotasEmMassa();
+
+  const [mudarStatus, setMudarStatus] = React.useState(true);
+  const [status, setStatus] = React.useState<StatusCota>("ativa");
+  const [contempladaEm, setContempladaEm] = React.useState(hoje());
+  const [forma, setForma] = React.useState<FormaContemplacao>("sorteio");
+
+  const [mudarVendedor, setMudarVendedor] = React.useState(false);
+  const [vendedor, setVendedor] = React.useState("");
+
+  const [mudarAdm, setMudarAdm] = React.useState(false);
+  const [adm, setAdm] = React.useState("");
+
+  const [mudarComissao, setMudarComissao] = React.useState(false);
+  const [comissao, setComissao] = React.useState("");
+
+  const contemplada = status === "contemplada";
+  const nada = !mudarStatus && !mudarVendedor && !mudarAdm && !mudarComissao;
+
+  function enviar(e: React.FormEvent) {
+    e.preventDefault();
+    const patch: Partial<Cota> = {};
+    if (mudarStatus) {
+      patch.status = status;
+      // Espelha o editor de uma cota: contemplada exige data e forma, e sair de
+      // contemplada tem que limpar as duas, senão fica lixo na linha.
+      patch.contemplada_em = contemplada ? contempladaEm : null;
+      patch.forma = contemplada ? forma : null;
+    }
+    if (mudarVendedor) patch.vendedor_id = vendedor || null;
+    if (mudarAdm) patch.administradora = adm.trim();
+    if (mudarComissao) patch.parcelas_comissao = comissao ? Number(comissao) : null;
+
+    emMassa.mutate({ ids, patch }, { onSuccess: () => aoFechar(true) });
+  }
+
+  return (
+    <Modal
+      aberto
+      aoFechar={() => aoFechar(false)}
+      titulo={`Editar ${ids.length} cota(s)`}
+      largura="max-w-lg"
+    >
+      <form onSubmit={enviar} className="flex flex-col gap-3">
+        <p className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+          Marque o que quer mudar. Os campos desmarcados ficam como estão em cada cota.
+        </p>
+
+        <LinhaMassa marcado={mudarStatus} aoMarcar={setMudarStatus} rotulo="Situação">
+          <Select value={status} onChange={(e) => setStatus(e.target.value as StatusCota)}>
+            {STATUS_COTA.map((s) => (
+              <option key={s.valor} value={s.valor}>
+                {s.rotulo}
+              </option>
+            ))}
+          </Select>
+          {contemplada && (
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <Input
+                type="date"
+                value={contempladaEm}
+                onChange={(e) => setContempladaEm(e.target.value)}
+                aria-label="Contemplada em"
+              />
+              <Select
+                value={forma}
+                onChange={(e) => setForma(e.target.value as FormaContemplacao)}
+                aria-label="Como"
+              >
+                <option value="sorteio">Sorteio</option>
+                <option value="lance">Lance</option>
+              </Select>
+            </div>
+          )}
+        </LinhaMassa>
+
+        <LinhaMassa marcado={mudarAdm} aoMarcar={setMudarAdm} rotulo="Administradora">
+          <Input
+            value={adm}
+            onChange={(e) => setAdm(e.target.value)}
+            placeholder="Banco do Brasil"
+            required={mudarAdm}
+          />
+        </LinhaMassa>
+
+        <LinhaMassa
+          marcado={mudarComissao}
+          aoMarcar={setMudarComissao}
+          rotulo="Parcelas para fechar a comissão"
+        >
+          <Input
+            type="number"
+            min={1}
+            max={300}
+            value={comissao}
+            onChange={(e) => setComissao(e.target.value)}
+            placeholder="Em branco volta ao padrão do segmento"
+            className="font-num"
+          />
+        </LinhaMassa>
+
+        {pode("carteira.ver_todas") && (
+          <LinhaMassa marcado={mudarVendedor} aoMarcar={setMudarVendedor} rotulo="Vendedor">
+            <Select value={vendedor} onChange={(e) => setVendedor(e.target.value)}>
+              <option value="">— sem vendedor —</option>
+              {usuarios.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.nome}
+                </option>
+              ))}
+            </Select>
+          </LinhaMassa>
+        )}
+
+        <div className="mt-1 flex justify-end gap-2">
+          <Botao type="button" variante="contorno" onClick={() => aoFechar(false)}>
+            Cancelar
+          </Botao>
+          <Botao type="submit" disabled={nada} carregando={emMassa.isPending}>
+            Aplicar a {ids.length} cota(s)
+          </Botao>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/** Campo da edição em massa: só entra no update se a caixa estiver marcada. */
+function LinhaMassa({
+  marcado,
+  aoMarcar,
+  rotulo,
+  children,
+}: {
+  marcado: boolean;
+  aoMarcar: (v: boolean) => void;
+  rotulo: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-lg border p-3 transition-colors",
+        marcado ? "border-primary/40 bg-primary/[0.04]" : "border-border",
+      )}
+    >
+      <label className="flex cursor-pointer items-center gap-2">
+        <input
+          type="checkbox"
+          checked={marcado}
+          onChange={(e) => aoMarcar(e.target.checked)}
+          className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-primary"
+        />
+        <span className="text-xs font-medium text-foreground">{rotulo}</span>
+      </label>
+      <div className={cn("mt-2", !marcado && "pointer-events-none opacity-40")}>{children}</div>
+    </div>
+  );
+}
+
 /* --------------------------------- Página --------------------------------- */
 
 export default function Carteira() {
@@ -390,6 +602,8 @@ export default function Carteira() {
   const [fStatus, setFStatus] = React.useState("");
   const [editando, setEditando] = React.useState<Partial<Cota> | null>(null);
   const [importando, setImportando] = React.useState(false);
+  const [selecao, setSelecao] = React.useState<Set<string>>(new Set());
+  const [massa, setMassa] = React.useState(false);
 
   const editar = pode("carteira.editar");
 
@@ -406,15 +620,33 @@ export default function Carteira() {
 
   const resumo = React.useMemo(() => {
     const vivas = cotas.filter((c) => c.status !== "cancelada");
+    const canceladas = cotas.length - vivas.length;
     return {
       cotas: vivas.length,
       credito: vivas.reduce((s, c) => s + Number(c.credito), 0),
       contempladas: cotas.filter((c) => c.status === "contemplada").length,
-      mensal: cotas
-        .filter((c) => c.status === "ativa" || c.status === "contemplada")
-        .reduce((s, c) => s + Number(c.parcela ?? 0), 0),
+      canceladas,
+      // Quem não cancelou está adimplente. Contemplada e quitada contam a favor:
+      // chegaram lá pagando.
+      adimplencia: cotas.length ? (vivas.length / cotas.length) * 100 : 0,
     };
   }, [cotas]);
+
+  /* Seleção. Só sobrevive o que ainda está na tela: mudar o filtro com cotas
+     marcadas fora dele faria a edição em massa pegar linha invisível. */
+  const idsVisiveis = React.useMemo(() => filtradas.map((c) => c.id), [filtradas]);
+  const marcadas = React.useMemo(
+    () => idsVisiveis.filter((id) => selecao.has(id)),
+    [idsVisiveis, selecao],
+  );
+  const todasMarcadas = idsVisiveis.length > 0 && marcadas.length === idsVisiveis.length;
+
+  const alternar = (id: string) =>
+    setSelecao((p) => {
+      const n = new Set(p);
+      if (!n.delete(id)) n.add(id);
+      return n;
+    });
 
   if (isLoading) return <Carregando texto="Carregando carteira..." />;
 
@@ -487,26 +719,63 @@ export default function Carteira() {
         ) : (
           <>
             <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {[
+              {([
                 { r: "Cotas na carteira", v: String(resumo.cotas) },
                 { r: "Crédito sob gestão", v: moeda(resumo.credito) },
                 { r: "Contempladas", v: String(resumo.contempladas) },
-                { r: "Parcelas/mês", v: moeda(resumo.mensal) },
-              ].map((x) => (
+                {
+                  r: "Taxa de adimplência",
+                  v: `${resumo.adimplencia.toFixed(1).replace(".", ",")}%`,
+                  nota: `${resumo.cotas} na carteira · ${resumo.canceladas} cancelada(s)`,
+                },
+              ] as { r: string; v: string; nota?: string }[]).map((x) => (
                 <Cartao key={x.r} className="px-4 py-3">
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{x.r}</p>
                   <p className="mt-0.5 font-num text-lg font-semibold tabular-nums">{x.v}</p>
+                  {x.nota && <p className="text-[11px] text-muted-foreground">{x.nota}</p>}
                 </Cartao>
               ))}
             </div>
+
+            {editar && marcadas.length > 0 && (
+              <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary/40 bg-primary/[0.06] px-4 py-2.5">
+                <p className="min-w-0 flex-1 text-xs font-medium text-foreground">
+                  {marcadas.length} cota(s) selecionada(s)
+                </p>
+                <Botao tamanho="sm" variante="contorno" onClick={() => setSelecao(new Set())}>
+                  Limpar seleção
+                </Botao>
+                <Botao tamanho="sm" onClick={() => setMassa(true)}>
+                  <Pencil className="h-3.5 w-3.5" /> Editar em massa
+                </Botao>
+              </div>
+            )}
 
             {filtradas.length === 0 ? (
               <Vazio icone={Search} titulo="Nada encontrado" descricao="Tente outro termo." />
             ) : (
               <Cartao className="overflow-x-auto">
-                <table className="w-full min-w-[880px] text-sm">
+                <table className="w-full min-w-[920px] text-sm">
                   <thead>
                     <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                      {editar && (
+                        <th className="w-9 pl-4 pr-1">
+                          <input
+                            type="checkbox"
+                            checked={todasMarcadas}
+                            onChange={() =>
+                              setSelecao(todasMarcadas ? new Set() : new Set(idsVisiveis))
+                            }
+                            title={
+                              todasMarcadas
+                                ? "Desmarcar todas"
+                                : `Marcar as ${idsVisiveis.length} cota(s) da lista`
+                            }
+                            aria-label="Marcar todas as cotas da lista"
+                            className="h-3.5 w-3.5 cursor-pointer accent-primary"
+                          />
+                        </th>
+                      )}
                       <th className="px-4 py-2.5 font-medium">Cliente</th>
                       <th className="px-4 py-2.5 font-medium">Administradora</th>
                       <th className="px-4 py-2.5 font-medium">Grupo/cota</th>
@@ -525,11 +794,28 @@ export default function Carteira() {
                         100,
                         Math.round((c.parcelas_pagas / Math.max(1, c.prazo_meses)) * 100),
                       );
+                      const limite = parcelasComissao(c);
+                      const paga = comissaoFechada(c);
+                      const marcada = selecao.has(c.id);
                       return (
                         <tr
                           key={c.id}
-                          className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/50"
+                          className={cn(
+                            "border-b border-border/60 transition-colors last:border-0 hover:bg-muted/50",
+                            marcada && "bg-primary/[0.06] hover:bg-primary/10",
+                          )}
                         >
+                          {editar && (
+                            <td className="pl-4 pr-1">
+                              <input
+                                type="checkbox"
+                                checked={marcada}
+                                onChange={() => alternar(c.id)}
+                                aria-label={`Selecionar a cota de ${c.cliente_nome}`}
+                                className="h-3.5 w-3.5 cursor-pointer accent-primary"
+                              />
+                            </td>
+                          )}
                           <td className="px-4 py-2.5">
                             <p className="font-medium text-foreground">{c.cliente_nome}</p>
                             <p className="text-[11px] text-muted-foreground">
@@ -565,6 +851,34 @@ export default function Carteira() {
                                 {c.parcelas_pagas}/{c.prazo_meses}
                               </span>
                             </div>
+                            {/* Marco da comissão: o visto só aparece quando fecha,
+                                e até lá mostra quanto falta. Em cota cancelada o
+                                que falta não chega mais, então some a contagem —
+                                mas se já tinha fechado, o visto fica. */}
+                            {(paga || c.status !== "cancelada") && (
+                            <span
+                              className={cn(
+                                "mt-1 inline-flex items-center gap-1 text-[10px]",
+                                paga ? "font-medium text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
+                              )}
+                              title={
+                                paga
+                                  ? `Comissão fechada: ${limite} parcela(s) pagas.`
+                                  : `Comissão fecha com ${limite} parcela(s) pagas.`
+                              }
+                            >
+                              {paga ? (
+                                <>
+                                  <CheckCircle2 className="h-3 w-3 shrink-0" /> Comissão paga
+                                </>
+                              ) : (
+                                <>
+                                  <Circle className="h-3 w-3 shrink-0" /> Faltam{" "}
+                                  {limite - c.parcelas_pagas} p/ comissão
+                                </>
+                              )}
+                            </span>
+                            )}
                           </td>
                           <td className="px-4 py-2.5">
                             <span
@@ -618,6 +932,15 @@ export default function Carteira() {
 
       <EditorCota cota={editando} aoFechar={() => setEditando(null)} />
       {importando && <ImportarPlanilha aoFechar={() => setImportando(false)} />}
+      {massa && marcadas.length > 0 && (
+        <EdicaoEmMassa
+          ids={marcadas}
+          aoFechar={(limpar) => {
+            setMassa(false);
+            if (limpar) setSelecao(new Set());
+          }}
+        />
+      )}
     </div>
   );
 }

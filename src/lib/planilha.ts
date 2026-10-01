@@ -19,6 +19,7 @@ export const COLUNAS = [
   "Parcela",
   "Prazo (meses)",
   "Parcelas pagas",
+  "Parcelas p/ comissão",
   "Data da venda",
   "Situação",
   "Contemplada em",
@@ -27,8 +28,8 @@ export const COLUNAS = [
 ] as const;
 
 const EXEMPLOS = [
-  ["Maria Silva", "Banco do Brasil", "Imóvel", "1234", "567", "300.000,00", "1.980,00", "200", "12", "15/03/2026", "Ativa", "", "", "Indicação do escritório"],
-  ["João Souza", "Canopus", "Automóvel", "7788", "12", "90.000,00", "1.150,00", "80", "30", "02/06/2026", "Contemplada", "10/09/2026", "Lance", ""],
+  ["Maria Silva", "Banco do Brasil", "Imóvel", "1234", "567", "300.000,00", "1.980,00", "200", "12", "", "15/03/2026", "Ativa", "", "", "Indicação do escritório"],
+  ["João Souza", "Canopus", "Automóvel", "7788", "12", "90.000,00", "", "80", "30", "", "02/06/2026", "Contemplada", "10/09/2026", "Lance", "Parcela em branco: é opcional"],
 ];
 
 /* ------------------------------- leitura CSV ------------------------------ */
@@ -198,6 +199,11 @@ export function importarCarteira(texto: string): LinhaImportada[] {
 
     const forma = semAcento(pega("Como (sorteio/lance)"));
 
+    const comissao = numero(pega("Parcelas p/ comissão"));
+    if (comissao !== null && (comissao < 1 || comissao > 300)) {
+      return erro(`Parcelas p/ comissão "${pega("Parcelas p/ comissão")}" fora de 1 a 300.`);
+    }
+
     return {
       linha,
       erro: null,
@@ -211,6 +217,8 @@ export function importarCarteira(texto: string): LinhaImportada[] {
         parcela: numero(pega("Parcela")),
         prazo_meses: Math.round(prazo),
         parcelas_pagas: Math.round(numero(pega("Parcelas pagas")) ?? 0),
+        // Em branco significa "usa o padrão do segmento", não zero.
+        parcelas_comissao: comissao === null ? null : Math.round(comissao),
         data_venda: dataVenda,
         status: sit,
         contemplada_em: contemplada ? (contEm ? data(contEm) : dataVenda) : null,

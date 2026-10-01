@@ -431,8 +431,11 @@ export default function Painel() {
               <Indicador
                 icone={Wallet}
                 rotulo="Parcelas/mês"
-                valor={moeda(carteira.parcelaMensal)}
-                nota="pago pelos clientes"
+                // O valor da parcela é opcional na cota. Sem nenhuma preenchida o
+                // total seria R$ 0, que se lê como "ninguém paga nada" em vez de
+                // "não foi informado" — então mostra travessão.
+                valor={carteira.parcelaMensal > 0 ? moeda(carteira.parcelaMensal) : "—"}
+                nota={carteira.parcelaMensal > 0 ? "pago pelos clientes" : "parcela não informada"}
               />
               <Indicador
                 icone={AlarmClock}
