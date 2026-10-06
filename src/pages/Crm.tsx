@@ -12,6 +12,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import {
+  AlertTriangle,
   Download,
   LayoutGrid,
   MessageCircle,
@@ -19,12 +20,13 @@ import {
   Plus,
   Rows3,
   Search,
+  Upload,
   Users,
 } from "lucide-react";
 import {
   useContatos,
   useEtapas,
-  useImportarCarteira,
+  useImportarContatos,
   useMoverEtapa,
   useOrigens,
   useSalvarContato,
@@ -36,6 +38,8 @@ import { AtividadeRapida, FaixaAtividade } from "@/components/Atividade";
 import { Botao, Campo, Carregando, Cartao, Input, Modal, Select, Selo, Vazio } from "@/components/ui";
 import type { Contato, Temperatura } from "@/lib/types";
 import { INTERESSES, TEMPERATURAS } from "@/lib/types";
+import type { LinhaContato } from "@/lib/planilha";
+import { baixarModeloContatos, importarContatos } from "@/lib/planilha";
 import { cn, diasAte, diasDesde, linkWhatsapp, moeda } from "@/lib/utils";
 
 /* ------------------------------- Cartão do kanban ------------------------- */
@@ -267,6 +271,177 @@ function NovoContato({ aberto, aoFechar }: { aberto: boolean; aoFechar: () => vo
   );
 }
 
+/* -------------------------------- Importação ------------------------------- */
+
+/**
+ * Importa contatos de planilha. A tela mostra o que vai entrar antes de gravar —
+ * importação é das poucas ações que mexem em centenas de linhas de uma vez, e
+ * desfazer no banco depois é bem mais chato do que conferir aqui.
+ *
+ * Repetido não é erro: a mesma pessoa pode aparecer de novo com dado novo. Por
+ * padrão fica de fora, mas dá para trazer marcando a caixa.
+ */
+function ImportarContatos({ aoFechar }: { aoFechar: () => void }) {
+  const importar = useImportarContatos();
+  const { data: etapas = [] } = useEtapas();
+  const { data: origens = [] } = useOrigens();
+  const { data: usuarios = [] } = useUsuarios();
+  const { data: contatos = [] } = useContatos();
+
+  const [linhas, setLinhas] = React.useState<LinhaContato[] | null>(null);
+  const [arquivo, setArquivo] = React.useState("");
+  const [trazerRepetidos, setTrazerRepetidos] = React.useState(false);
+
+  const validas = linhas?.filter((l) => l.contato) ?? [];
+  const problemas = linhas?.filter((l) => l.erro) ?? [];
+  const repetidas = validas.filter((l) => l.duplicadoDe);
+  const aImportar = trazerRepetidos ? validas : validas.filter((l) => !l.duplicadoDe);
+
+  async function ler(f: File) {
+    setArquivo(f.name);
+    setLinhas(
+      importarContatos(await f.text(), {
+        etapas,
+        origens,
+        usuarios,
+        existentes: contatos.map((c) => ({ nome: c.nome, telefone: c.telefone })),
+      }),
+    );
+  }
+
+  return (
+    <Modal aberto aoFechar={aoFechar} titulo="Importar contatos de planilha" largura="max-w-3xl">
+      <div className="flex flex-col gap-4">
+        <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+          <p>
+            Baixe o modelo, preencha um contato por linha e salve como <strong>CSV</strong> (no
+            Excel: Salvar como → CSV UTF-8; no Google Planilhas: Fazer download → .csv). Só o nome é
+            obrigatório — o resto entra em branco se faltar.
+          </p>
+          <Botao
+            type="button"
+            tamanho="sm"
+            variante="contorno"
+            className="mt-2"
+            onClick={baixarModeloContatos}
+          >
+            <Download className="h-3.5 w-3.5" /> Baixar modelo
+          </Botao>
+        </div>
+
+        <Campo label="Planilha" hint="Arquivo .csv com o cabeçalho do modelo.">
+          <Input
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void ler(f);
+            }}
+            className="h-auto py-1.5 text-xs file:mr-3 file:rounded file:border-0 file:bg-secondary file:px-2 file:py-1 file:text-xs"
+          />
+        </Campo>
+
+        {linhas && (
+          <div className="flex flex-col gap-3">
+            <p className="text-xs text-muted-foreground">
+              <strong className="text-foreground">{arquivo}</strong> — {aImportar.length} contato(s)
+              prontos
+              {problemas.length > 0 && `, ${problemas.length} linha(s) com problema`}
+              {repetidas.length > 0 && `, ${repetidas.length} já na base`}.
+            </p>
+
+            {problemas.length > 0 && (
+              <div className="max-h-40 overflow-y-auto rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+                <ul className="flex flex-col gap-1 text-xs text-destructive">
+                  {problemas.map((p) => (
+                    <li key={p.linha}>
+                      Linha {p.linha}: {p.erro}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {repetidas.length > 0 && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                <p className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    {repetidas.length} linha(s) parecem já existir:{" "}
+                    {repetidas
+                      .slice(0, 5)
+                      .map((l) => l.duplicadoDe)
+                      .join(", ")}
+                    {repetidas.length > 5 && ` e mais ${repetidas.length - 5}`}.
+                  </span>
+                </p>
+                <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={trazerRepetidos}
+                    onChange={(e) => setTrazerRepetidos(e.target.checked)}
+                    className="h-3.5 w-3.5 cursor-pointer accent-primary"
+                  />
+                  Importar os repetidos também (vira um contato novo, não atualiza o antigo)
+                </label>
+              </div>
+            )}
+
+            {aImportar.length > 0 && (
+              <div className="max-h-56 overflow-auto rounded-lg border border-border">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-muted/80 text-left text-[10px] uppercase tracking-wide text-muted-foreground backdrop-blur">
+                    <tr>
+                      <th className="px-2 py-1.5">Nome</th>
+                      <th className="px-2 py-1.5">Telefone</th>
+                      <th className="px-2 py-1.5">Interesse</th>
+                      <th className="px-2 py-1.5">Valor</th>
+                      <th className="px-2 py-1.5">Etapa</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {aImportar.map((l) => (
+                      <tr key={l.linha} className="border-t border-border/60">
+                        <td className="px-2 py-1.5">{l.contato!.nome}</td>
+                        <td className="px-2 py-1.5 font-num">{l.contato!.telefone ?? "—"}</td>
+                        <td className="px-2 py-1.5">{l.contato!.interesse ?? "—"}</td>
+                        <td className="px-2 py-1.5 font-num">
+                          {l.contato!.valor_estimado ? moeda(l.contato!.valor_estimado) : "—"}
+                        </td>
+                        <td className="px-2 py-1.5">
+                          {etapas.find((e) => e.id === l.contato!.etapa_id)?.nome ?? "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <Botao variante="contorno" onClick={aoFechar}>
+            Cancelar
+          </Botao>
+          <Botao
+            disabled={aImportar.length === 0}
+            carregando={importar.isPending}
+            onClick={() =>
+              importar.mutate(
+                aImportar.map((l) => l.contato!),
+                { onSuccess: aoFechar },
+              )
+            }
+          >
+            Importar {aImportar.length} contato(s)
+          </Botao>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 /* ---------------------------------- Página -------------------------------- */
 
 export default function Crm() {
@@ -275,13 +450,13 @@ export default function Crm() {
   const { data: contatos = [], isLoading } = useContatos();
   const { data: usuarios = [] } = useUsuarios();
   const mover = useMoverEtapa();
-  const importar = useImportarCarteira();
 
   const [visao, setVisao] = React.useState<"kanban" | "lista">("kanban");
   const [busca, setBusca] = React.useState("");
   const [fResponsavel, setFResponsavel] = React.useState("");
   const [fTemperatura, setFTemperatura] = React.useState("");
   const [novoAberto, setNovoAberto] = React.useState(false);
+  const [importando, setImportando] = React.useState(false);
   const [abertoId, setAbertoId] = React.useState<string | null>(null);
   const [atividadeId, setAtividadeId] = React.useState<string | null>(null);
   const [arrastando, setArrastando] = React.useState<Contato | null>(null);
@@ -368,11 +543,10 @@ export default function Crm() {
               <Botao
                 variante="contorno"
                 tamanho="sm"
-                onClick={() => importar.mutate()}
-                carregando={importar.isPending}
-                title="Traz os contatos da planilha de acompanhamento. Roda só uma vez por nome."
+                onClick={() => setImportando(true)}
+                title="Traz contatos de um arquivo .csv. Dá para baixar o modelo na janela."
               >
-                <Download className="h-3.5 w-3.5" /> Importar planilha
+                <Upload className="h-3.5 w-3.5" /> Importar planilha
               </Botao>
               <Botao tamanho="sm" onClick={() => setNovoAberto(true)}>
                 <Plus className="h-3.5 w-3.5" /> Novo contato
@@ -431,8 +605,8 @@ export default function Crm() {
             acao={
               editar && (
                 <div className="flex gap-2">
-                  <Botao variante="contorno" onClick={() => importar.mutate()} carregando={importar.isPending}>
-                    <Download className="h-4 w-4" /> Importar planilha
+                  <Botao variante="contorno" onClick={() => setImportando(true)}>
+                    <Upload className="h-4 w-4" /> Importar planilha
                   </Botao>
                   <Botao onClick={() => setNovoAberto(true)}>
                     <Plus className="h-4 w-4" /> Novo contato
@@ -490,6 +664,7 @@ export default function Crm() {
       {aberto && <FichaContato contato={aberto} aoFechar={() => setAbertoId(null)} />}
       <AtividadeRapida contato={emAtividade} aoFechar={() => setAtividadeId(null)} />
       <NovoContato aberto={novoAberto} aoFechar={() => setNovoAberto(false)} />
+      {importando && <ImportarContatos aoFechar={() => setImportando(false)} />}
     </div>
   );
 }

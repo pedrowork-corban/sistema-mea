@@ -255,19 +255,29 @@ export function useRegistrarInteracao() {
   });
 }
 
-export function useImportarCarteira() {
+/**
+ * Importação em lote de contatos da planilha. Um insert só: ou entra a planilha
+ * inteira, ou não entra nada — meia importação é pior que nenhuma, porque aí não
+ * se sabe mais de onde continuar.
+ */
+export function useImportarContatos() {
   const qc = useQueryClient();
+  const { usuario } = useAuth();
   return useMutation({
-    mutationFn: async () => {
-      const { data, error } = await supabase.rpc("importar_carteira_inicial");
-      if (error) throw error;
-      return data as number;
-    },
-    onSuccess: (n) => {
-      void qc.invalidateQueries({ queryKey: ["contatos"] });
-      toast.success(
-        n === 0 ? "Nada novo para importar." : `${n} contato(s) importado(s) da planilha.`,
+    mutationFn: async (contatos: Partial<Contato>[]) => {
+      const { error } = await supabase.from("contatos").insert(
+        contatos.map((c) => ({
+          ...c,
+          org_id: usuario!.org_id,
+          criado_por: usuario!.id,
+          responsavel_id: c.responsavel_id ?? usuario!.id,
+        })),
       );
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ["contatos"] });
+      toast.success(`${v.length} contato(s) importado(s).`);
     },
     onError: (e) => toast.error(msgErro(e)),
   });
