@@ -93,6 +93,20 @@ function CartaoContato({
         )}
       </div>
 
+      {contato.tags?.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {contato.tags.map((t) => (
+            <span
+              key={t}
+              title={t}
+              className="max-w-full truncate rounded bg-secondary px-1.5 py-px text-[10px] text-secondary-foreground"
+            >
+              {t}
+            </span>
+          ))}
+        </div>
+      )}
+
       <FaixaAtividade contato={contato} aoAgendar={aoAgendar} />
     </div>
   );

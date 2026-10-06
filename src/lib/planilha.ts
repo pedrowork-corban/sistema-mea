@@ -446,8 +446,10 @@ export function importarContatos(texto: string, ctx: ContextoContatos): LinhaCon
     if (digitos.length >= 10 && !fonesVistos.has(digitos)) fonesVistos.set(digitos, nome);
     if (!nomesVistos.has(semAcento(nome))) nomesVistos.set(semAcento(nome), nome);
 
+    // Separa em ";" e em ",", menos a vírgula entre dígitos — ela é decimal, e
+    // uma tag "R$ 1.300,00" virava duas: "R$ 1.300" e "00".
     const tags = pega("Tags")
-      .split(/[;,]/)
+      .split(/;|,(?!\d)|(?<!\d),/)
       .map((t) => t.trim())
       .filter(Boolean);
 
