@@ -8,6 +8,11 @@
  *   - O lance abate o saldo devedor do plano. Lance embutido sai do próprio crédito
  *     (o cliente recebe menos); lance próprio sai do bolso.
  *
+ * Quando o vendedor informa a parcela à mão (`parcelaManual`), ela manda: é o número
+ * que está na tabela da administradora, e somar taxa com fundo de reserva quase nunca
+ * chega nele. Nesse caso o caminho se inverte — o total do plano passa a ser deduzido
+ * da parcela, e não o contrário.
+ *
  * Consequência importante e verdadeira: o lance embutido NÃO muda o custo do consórcio,
  * só antecipa a contemplação e reduz o crédito recebido.
  */
@@ -29,6 +34,12 @@ export interface EntradaSimulacao {
   /** 0 = sem contemplação prevista */
   mesContemplacao: number;
   reducao: Reducao;
+  /**
+   * Parcela cheia da tabela da administradora, informada à mão. Quando vem
+   * preenchida, substitui a parcela calculada e o total do plano é refeito a
+   * partir dela. Nulo ou 0 = calcula pelas taxas.
+   */
+  parcelaManual?: number | null;
 }
 
 export interface ResultadoSimulacao {
@@ -36,6 +47,8 @@ export interface ResultadoSimulacao {
   parcelaBase: number;
   seguro: number;
   parcela: number;
+  /** a parcela veio da tabela, digitada pelo vendedor */
+  parcelaInformada: boolean;
 
   lanceEmbutido: number;
   lanceTotal: number;
@@ -51,12 +64,6 @@ export interface ResultadoSimulacao {
   mesesPagos: number;
 
   desembolso: number;
-  custoTotal: number;
-  /** % do crédito líquido */
-  custoPct: number;
-  custoMensal: number;
-  /** % ao mês */
-  custoMensalPct: number;
 }
 
 const arred = (v: number) => Math.round(v * 100) / 100;
@@ -65,9 +72,16 @@ export function simular(e: EntradaSimulacao): ResultadoSimulacao {
   const credito = Math.max(0, e.credito);
   const prazo = Math.max(1, Math.round(e.prazoMeses));
 
-  const totalPlano = credito * (1 + e.taxaAdm / 100 + e.fundoReserva / 100);
-  const parcelaBase = totalPlano / prazo;
   const seguro = (credito * e.seguroMensal) / 100;
+
+  // A parcela digitada é a cheia, com seguro dentro — é assim que a administradora
+  // apresenta. Tiramos o seguro para achar a parcela base, que é a que amortiza o
+  // plano e sobre a qual o lance incide.
+  const parcelaInformada = (e.parcelaManual ?? 0) > 0;
+  const parcelaBase = parcelaInformada
+    ? Math.max(0, e.parcelaManual! - seguro)
+    : (credito * (1 + e.taxaAdm / 100 + e.fundoReserva / 100)) / prazo;
+  const totalPlano = parcelaBase * prazo;
   const parcela = parcelaBase + seguro;
 
   const lanceEmbutido = (credito * Math.min(e.lanceEmbutidoPct, 100)) / 100;
@@ -99,14 +113,13 @@ export function simular(e: EntradaSimulacao): ResultadoSimulacao {
 
   // O lance embutido sai do crédito, não do bolso — por isso entra abatendo.
   const desembolso = totalPlano - lanceEmbutido + seguro * mesesPagos;
-  const custoTotal = desembolso - creditoLiquido;
-  const custoPct = creditoLiquido > 0 ? (custoTotal / creditoLiquido) * 100 : 0;
 
   return {
     totalPlano: arred(totalPlano),
     parcelaBase: arred(parcelaBase),
     seguro: arred(seguro),
     parcela: arred(parcela),
+    parcelaInformada,
     lanceEmbutido: arred(lanceEmbutido),
     lanceTotal: arred(lanceTotal),
     creditoLiquido: arred(creditoLiquido),
@@ -117,18 +130,28 @@ export function simular(e: EntradaSimulacao): ResultadoSimulacao {
     novoPrazo,
     mesesPagos,
     desembolso: arred(desembolso),
-    custoTotal: arred(custoTotal),
-    custoPct: arred(custoPct),
-    custoMensal: arred(mesesPagos > 0 ? custoTotal / mesesPagos : 0),
-    custoMensalPct: arred(mesesPagos > 0 ? custoPct / mesesPagos : 0),
   };
 }
 
-/** Financiamento Price, para o comparativo. `jurosMes` em % ao mês. */
-export function financiamento(valor: number, meses: number, jurosMes: number) {
+/**
+ * Financiamento Price, para o comparativo. `jurosMes` em % ao mês.
+ *
+ * A entrada abate o valor financiado e volta somada no total, porque é dinheiro
+ * que o cliente tira do bolso no dia da compra — ignorá-la fazia o financiamento
+ * parecer mais barato do que é.
+ */
+export function financiamento(valor: number, meses: number, jurosMes: number, entrada = 0) {
+  const paga = Math.min(Math.max(0, entrada), valor);
+  const financiado = valor - paga;
   const i = jurosMes / 100;
   const n = Math.max(1, Math.round(meses));
-  const parcela = i === 0 ? valor / n : (valor * i) / (1 - Math.pow(1 + i, -n));
-  const total = parcela * n;
-  return { parcela: arred(parcela), total: arred(total), juros: arred(total - valor) };
+  const parcela = i === 0 ? financiado / n : (financiado * i) / (1 - Math.pow(1 + i, -n));
+  const total = paga + parcela * n;
+  return {
+    entrada: arred(paga),
+    financiado: arred(financiado),
+    parcela: arred(parcela),
+    total: arred(total),
+    juros: arred(total - valor),
+  };
 }

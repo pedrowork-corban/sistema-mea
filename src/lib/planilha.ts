@@ -153,7 +153,8 @@ function segmento(v: string): Segmento | null {
   const achado = SEGMENTOS.find((s) => semAcento(s.rotulo) === alvo || s.valor === alvo);
   if (achado) return achado.valor;
   // apelidos que aparecem nas planilhas do dia a dia
-  if (/(carro|veiculo|moto|auto)/.test(alvo)) return "auto";
+  if (/(motocicl|moto)/.test(alvo) && !/auto/.test(alvo)) return "moto";
+  if (/(carro|veiculo|auto)/.test(alvo)) return "auto";
   if (/(imovel|casa|apartamento|terreno)/.test(alvo)) return "imovel";
   if (/(caminhao|pesad|trator|maquin)/.test(alvo)) return "pesado";
   if (/(servi|credito)/.test(alvo)) return "servico";

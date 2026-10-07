@@ -52,6 +52,27 @@ export const TEMAS: Record<Marca, Tema> = {
   },
 };
 
+/**
+ * O comparativo é o que o cliente coloca do lado: ou um financiamento, ou a
+ * proposta de outra administradora que ele já recebeu.
+ */
+export type Comparativo =
+  | {
+      tipo: "financiamento";
+      jurosMes: number;
+      entrada: number;
+      parcela: number;
+      total: number;
+    }
+  | {
+      tipo: "consorcio";
+      administradora: string;
+      credito: number;
+      parcela: number;
+      prazoMeses: number;
+      total: number;
+    };
+
 export interface DadosProposta {
   marca: Marca;
   titulo: string;
@@ -63,11 +84,30 @@ export interface DadosProposta {
   taxaAdm: number;
   fundoReserva: number;
   lanceProprio: number;
+  /** Taxa adm. + fundo de reserva aparecem no cartão? */
+  mostrarTaxas: boolean;
+  /** Seguro mensal aparece no cartão? */
+  mostrarSeguro: boolean;
   vendedorNome: string;
   vendedorCargo: string;
   vendedorTelefone: string;
   vendedorEmail: string;
-  comparativo: { jurosMes: number; parcela: number; total: number } | null;
+  comparativo: Comparativo | null;
+}
+
+/**
+ * O número que fecha a venda é a parcela que o cliente paga depois de contemplado,
+ * não a primeira. Quando não há contemplação prevista as duas são a mesma coisa, e
+ * aí o rótulo muda para não prometer o que a simulação não diz.
+ */
+export function parcelaDestaque(r: ResultadoSimulacao) {
+  if (r.lanceQuita) return { rotulo: "Depois de contemplado", valor: null, nota: "plano quitado" };
+  const mudou = r.temLance && Math.abs(r.novaParcela - r.parcela) >= 0.01;
+  return {
+    rotulo: mudou ? "Parcela depois de contemplado" : "Parcela mensal",
+    valor: mudou ? r.novaParcela : r.parcela,
+    nota: mudou ? `${r.novoPrazo} parcelas restantes` : null,
+  };
 }
 
 /* ----------------------------- peças do cartão ---------------------------- */
@@ -121,6 +161,7 @@ export const CartaoProposta = React.forwardRef<
 >(function CartaoProposta({ dados: d, r }, ref) {
   const tema = TEMAS[d.marca];
   const segmento = SEGMENTOS.find((s) => s.valor === d.segmento);
+  const destaque = parcelaDestaque(r);
   const geradoEm = new Date().toLocaleString("pt-BR", {
     day: "2-digit",
     month: "2-digit",
@@ -167,38 +208,50 @@ export const CartaoProposta = React.forwardRef<
         <p className="text-[9.5px] font-semibold uppercase tracking-[0.14em] text-[#8A93A0]">
           Crédito contratado
         </p>
-        <p className="font-num text-[34px] font-bold leading-none tracking-tight text-[#0B1220]">
+        <p className="font-num text-[37px] font-bold leading-none tracking-tight text-[#0B1220]">
           {moedaExata(d.credito)}
         </p>
+
+        {/* a parcela que o cliente leva pra casa depois de contemplado */}
+        <div
+          className="mt-3.5 flex items-center justify-between gap-3 rounded-[10px] px-3.5 py-2.5"
+          style={{ background: tema.detalhe }}
+        >
+          <span
+            className="max-w-[46%] text-[9.5px] font-bold uppercase leading-tight tracking-[0.08em]"
+            style={{ color: tema.detalheTexto }}
+          >
+            {destaque.rotulo}
+          </span>
+          <span className="text-right" style={{ color: tema.detalheTexto }}>
+            <span className="font-num block text-[22px] font-bold leading-none tabular-nums">
+              {destaque.valor === null ? destaque.nota : moedaExata(destaque.valor)}
+            </span>
+            {destaque.valor !== null && destaque.nota && (
+              <span className="mt-[3px] block text-[8.5px] font-semibold leading-none opacity-75">
+                {destaque.nota}
+              </span>
+            )}
+          </span>
+        </div>
 
         <div className="mt-3 border-t border-[#EDF0F4] pt-1">
           <Linha rotulo="Tipo do bem" valor={segmento?.bem ?? "—"} tema={tema} />
           <Linha rotulo="Administradora" valor={d.administradora} tema={tema} />
           <Linha rotulo="Prazo" valor={`${d.prazoMeses} meses`} tema={tema} />
-          <Linha
-            rotulo="Taxa adm. + fundo de reserva"
-            valor={pct(d.taxaAdm + d.fundoReserva, 1)}
-            tema={tema}
-          />
-        </div>
-
-        {/* parcela em destaque */}
-        <div
-          className="mt-3 flex items-center justify-between rounded-[10px] px-3.5 py-2.5"
-          style={{ background: tema.detalhe }}
-        >
-          <span
-            className="text-[10px] font-bold uppercase tracking-[0.1em]"
-            style={{ color: tema.detalheTexto }}
-          >
-            Parcela
-          </span>
-          <span
-            className="font-num text-[21px] font-bold leading-none tabular-nums"
-            style={{ color: tema.detalheTexto }}
-          >
-            {moedaExata(r.parcela)}
-          </span>
+          {destaque.valor !== r.parcela && (
+            <Linha rotulo="Parcela até a contemplação" valor={moedaExata(r.parcela)} tema={tema} />
+          )}
+          {d.mostrarTaxas && (
+            <Linha
+              rotulo="Taxa adm. + fundo de reserva"
+              valor={pct(d.taxaAdm + d.fundoReserva, 1)}
+              tema={tema}
+            />
+          )}
+          {d.mostrarSeguro && r.seguro > 0 && (
+            <Linha rotulo="Seguro mensal" valor={moedaExata(r.seguro)} tema={tema} />
+          )}
         </div>
 
         {r.temLance && (
@@ -235,23 +288,41 @@ export const CartaoProposta = React.forwardRef<
           </Secao>
         )}
 
-        <Secao titulo="Custo efetivo" tema={tema}>
-          <Linha rotulo="Total desembolsado" valor={moedaExata(r.desembolso)} tema={tema} />
-          <Linha rotulo="Custo total do crédito" valor={moedaExata(r.custoTotal)} tema={tema} />
-          <Linha rotulo="Custo mensal aprox." valor={moedaExata(r.custoMensal)} tema={tema} />
-          <Linha rotulo="Custo ao mês" valor={pct(r.custoMensalPct, 2)} tema={tema} forte />
-        </Secao>
-
         {d.comparativo && (
-          <Secao titulo="Se fosse financiamento" tema={tema}>
-            <Linha
-              rotulo={`Parcela a ${pct(d.comparativo.jurosMes, 2)} a.m.`}
-              valor={moedaExata(d.comparativo.parcela)}
-              tema={tema}
-            />
+          <Secao
+            titulo={
+              d.comparativo.tipo === "financiamento"
+                ? "Se fosse financiamento"
+                : `Comparando com ${d.comparativo.administradora || "outro consórcio"}`
+            }
+            tema={tema}
+          >
+            {d.comparativo.tipo === "financiamento" ? (
+              <>
+                {d.comparativo.entrada > 0 && (
+                  <Linha rotulo="Entrada" valor={moedaExata(d.comparativo.entrada)} tema={tema} />
+                )}
+                <Linha
+                  rotulo={`Parcela a ${pct(d.comparativo.jurosMes, 2)} a.m.`}
+                  valor={moedaExata(d.comparativo.parcela)}
+                  tema={tema}
+                />
+              </>
+            ) : (
+              <>
+                {d.comparativo.credito > 0 && d.comparativo.credito !== d.credito && (
+                  <Linha rotulo="Crédito" valor={moedaExata(d.comparativo.credito)} tema={tema} />
+                )}
+                <Linha
+                  rotulo={`Parcela em ${d.comparativo.prazoMeses} meses`}
+                  valor={moedaExata(d.comparativo.parcela)}
+                  tema={tema}
+                />
+              </>
+            )}
             <Linha rotulo="Total pago" valor={moedaExata(d.comparativo.total)} tema={tema} />
             <Linha
-              rotulo="Diferença a favor do consórcio"
+              rotulo="Diferença a favor desta proposta"
               valor={moedaExata(Math.max(0, d.comparativo.total - r.desembolso))}
               tema={tema}
               forte
@@ -292,17 +363,26 @@ export const CartaoProposta = React.forwardRef<
 /** Versão em texto, para colar no WhatsApp. */
 export function propostaEmTexto(d: DadosProposta, r: ResultadoSimulacao): string {
   const seg = SEGMENTOS.find((s) => s.valor === d.segmento)?.bem ?? "";
+  const destaque = parcelaDestaque(r);
   const l: string[] = [];
 
   l.push(`*${d.titulo}*`);
   if (d.cliente) l.push(`Para: ${d.cliente}`);
   l.push("");
-  l.push(`*Crédito:* ${moedaExata(d.credito)}`);
+  l.push(`*Crédito: ${moedaExata(d.credito)}*`);
+  l.push(
+    `*${destaque.rotulo}: ${destaque.valor === null ? destaque.nota : moedaExata(destaque.valor)}*`,
+  );
+  l.push("");
   l.push(`Bem: ${seg}  |  Administradora: ${d.administradora}`);
   l.push(`Prazo: ${d.prazoMeses} meses`);
-  l.push(`Taxa adm. + fundo de reserva: ${pct(d.taxaAdm + d.fundoReserva, 1)}`);
-  l.push("");
-  l.push(`*Parcela: ${moedaExata(r.parcela)}*`);
+  if (destaque.valor !== r.parcela) {
+    l.push(`Parcela até a contemplação: ${moedaExata(r.parcela)}`);
+  }
+  if (d.mostrarTaxas) {
+    l.push(`Taxa adm. + fundo de reserva: ${pct(d.taxaAdm + d.fundoReserva, 1)}`);
+  }
+  if (d.mostrarSeguro && r.seguro > 0) l.push(`Seguro mensal: ${moedaExata(r.seguro)}`);
 
   if (r.temLance) {
     l.push("");
@@ -318,18 +398,21 @@ export function propostaEmTexto(d: DadosProposta, r: ResultadoSimulacao): string
     );
   }
 
-  l.push("");
-  l.push("*Custo efetivo*");
-  l.push(`• Total desembolsado: ${moedaExata(r.desembolso)}`);
-  l.push(`• Custo do crédito: ${moedaExata(r.custoTotal)} (${pct(r.custoMensalPct, 2)} ao mês)`);
-
   if (d.comparativo) {
+    const c = d.comparativo;
     l.push("");
-    l.push(`*No financiamento a ${pct(d.comparativo.jurosMes, 2)} a.m.*`);
-    l.push(`• Parcela: ${moedaExata(d.comparativo.parcela)}`);
-    l.push(`• Total pago: ${moedaExata(d.comparativo.total)}`);
+    if (c.tipo === "financiamento") {
+      l.push(`*No financiamento a ${pct(c.jurosMes, 2)} a.m.*`);
+      if (c.entrada > 0) l.push(`• Entrada: ${moedaExata(c.entrada)}`);
+      l.push(`• Parcela: ${moedaExata(c.parcela)}`);
+    } else {
+      l.push(`*Em ${c.administradora || "outro consórcio"}*`);
+      if (c.credito > 0 && c.credito !== d.credito) l.push(`• Crédito: ${moedaExata(c.credito)}`);
+      l.push(`• Parcela em ${c.prazoMeses} meses: ${moedaExata(c.parcela)}`);
+    }
+    l.push(`• Total pago: ${moedaExata(c.total)}`);
     l.push(
-      `• Diferença a favor do consórcio: ${moedaExata(Math.max(0, d.comparativo.total - r.desembolso))}`,
+      `• Diferença a favor desta proposta: ${moedaExata(Math.max(0, c.total - r.desembolso))}`,
     );
   }
 

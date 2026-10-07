@@ -130,7 +130,7 @@ export interface Interacao {
 
 /* ------------------------- Simulador e carteira --------------------------- */
 
-export type Segmento = "imovel" | "auto" | "pesado" | "servico";
+export type Segmento = "imovel" | "auto" | "moto" | "pesado" | "servico";
 export type StatusCota = "ativa" | "contemplada" | "quitada" | "cancelada";
 export type FormaContemplacao = "sorteio" | "lance";
 export type Reducao = "parcela" | "prazo";
@@ -172,6 +172,8 @@ export interface Simulacao {
   mes_contemplacao: number;
   reducao: Reducao;
   parcela: number;
+  /** Parcela da tabela digitada pelo vendedor. Nulo = calculada pelas taxas. */
+  parcela_manual: number | null;
   total_pago: number;
   criado_em: string;
 }
@@ -209,6 +211,7 @@ export interface Cota {
 export const SEGMENTOS: { valor: Segmento; rotulo: string; bem: string; comissao: number }[] = [
   { valor: "imovel", rotulo: "Imóvel", bem: "Imóvel", comissao: 12 },
   { valor: "auto", rotulo: "Automóvel", bem: "Veículo", comissao: 7 },
+  { valor: "moto", rotulo: "Moto", bem: "Moto", comissao: 7 },
   { valor: "pesado", rotulo: "Pesados", bem: "Veículo pesado", comissao: 7 },
   { valor: "servico", rotulo: "Serviços", bem: "Serviços", comissao: 7 },
 ];

@@ -23,8 +23,10 @@ import type { Segmento, Simulacao } from "@/lib/types";
 import { SEGMENTOS } from "@/lib/types";
 import {
   CartaoProposta,
+  parcelaDestaque,
   propostaEmTexto,
   TEMAS,
+  type Comparativo,
   type DadosProposta,
   type Marca,
 } from "@/components/PropostaConsorcio";
@@ -32,12 +34,16 @@ import { baixarPdf, baixarPng, copiarImagem, copiarTexto } from "@/lib/exportar"
 import { Botao, Campo, Cartao, Carregando, Input, Modal, Select, Vazio } from "@/components/ui";
 import { cn, formatarDataHora, moeda, moedaExata, pct } from "@/lib/utils";
 
+type CompararCom = "nada" | "financiamento" | "consorcio";
+
 interface Form {
   tabelaId: string;
   administradora: string;
   segmento: Segmento;
   credito: number;
   prazoMeses: number;
+  /** 0 = calcular pelas taxas */
+  parcelaManual: number;
   taxaAdm: number;
   fundoReserva: number;
   seguroMensal: number;
@@ -45,8 +51,15 @@ interface Form {
   lanceEmbutidoPct: number;
   mesContemplacao: number;
   reducao: Reducao;
-  compararFin: boolean;
+  mostrarTaxas: boolean;
+  mostrarSeguro: boolean;
+  compararCom: CompararCom;
   jurosMes: number;
+  entradaFin: number;
+  outroNome: string;
+  outroCredito: number;
+  outroParcela: number;
+  outroPrazo: number;
   marca: Marca;
   titulo: string;
   contatoId: string;
@@ -59,6 +72,7 @@ const INICIAL: Form = {
   segmento: "auto",
   credito: 80_000,
   prazoMeses: 80,
+  parcelaManual: 0,
   taxaAdm: 24,
   fundoReserva: 5.3,
   seguroMensal: 0.045,
@@ -66,8 +80,15 @@ const INICIAL: Form = {
   lanceEmbutidoPct: 0,
   mesContemplacao: 1,
   reducao: "parcela",
-  compararFin: false,
+  mostrarTaxas: false,
+  mostrarSeguro: false,
+  compararCom: "nada",
   jurosMes: 1.8,
+  entradaFin: 0,
+  outroNome: "",
+  outroCredito: 0,
+  outroParcela: 0,
+  outroPrazo: 80,
   marca: "ma",
   titulo: "Simulação de consórcio",
   contatoId: "",
@@ -158,23 +179,34 @@ export default function Simulador() {
   // seleciona a primeira tabela assim que elas chegam
   React.useEffect(() => {
     if (f.tabelaId || tabelas.length === 0) return;
-    aplicarTabela(tabelas[0].id);
+    aplicar(tabelas[0].administradora, tabelas[0].segmento);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabelas]);
 
-  function aplicarTabela(id: string) {
-    const t = tabelas.find((x) => x.id === id);
-    if (!t) return;
+  const administradoras = React.useMemo(
+    () => [...new Set(tabelas.map((t) => t.administradora))].sort((a, b) => a.localeCompare(b, "pt-BR")),
+    [tabelas],
+  );
+
+  /**
+   * O vendedor escolhe administradora e segmento; a tabela é consequência. Quando a
+   * combinação não tem tabela cadastrada, as taxas ficam como estavam para ele
+   * ajustar à mão — melhor isso do que zerar o que já estava na tela.
+   */
+  function aplicar(administradora: string, segmento: Segmento) {
+    const t = tabelas.find((x) => x.administradora === administradora && x.segmento === segmento);
     setF((p) => ({
       ...p,
-      tabelaId: t.id,
-      administradora: t.administradora,
-      segmento: t.segmento,
-      prazoMeses: t.prazo_meses,
-      taxaAdm: Number(t.taxa_adm),
-      fundoReserva: Number(t.fundo_reserva),
-      seguroMensal: Number(t.seguro_mensal),
-      lanceEmbutidoPct: Math.min(p.lanceEmbutidoPct, Number(t.lance_embutido_max)),
+      administradora,
+      segmento,
+      tabelaId: t?.id ?? "",
+      ...(t && {
+        prazoMeses: t.prazo_meses,
+        taxaAdm: Number(t.taxa_adm),
+        fundoReserva: Number(t.fundo_reserva),
+        seguroMensal: Number(t.seguro_mensal),
+        lanceEmbutidoPct: Math.min(p.lanceEmbutidoPct, Number(t.lance_embutido_max)),
+      }),
     }));
   }
 
@@ -192,15 +224,54 @@ export default function Simulador() {
         lanceEmbutidoPct: f.lanceEmbutidoPct,
         mesContemplacao: f.mesContemplacao,
         reducao: f.reducao,
+        parcelaManual: f.parcelaManual,
       }),
     [f],
   );
 
-  const comparativo = React.useMemo(() => {
-    if (!f.compararFin) return null;
-    const fin = financiamento(f.credito, f.prazoMeses, f.jurosMes);
-    return { jurosMes: f.jurosMes, parcela: fin.parcela, total: fin.total };
-  }, [f.compararFin, f.credito, f.prazoMeses, f.jurosMes]);
+  const destaque = parcelaDestaque(r);
+
+  /** A parcela que as taxas dão, só para o vendedor comparar com a da tabela. */
+  const parcelaPelasTaxas =
+    (f.credito * (1 + f.taxaAdm / 100 + f.fundoReserva / 100)) / Math.max(1, f.prazoMeses) +
+    (f.credito * f.seguroMensal) / 100;
+
+  const comparativo = React.useMemo<Comparativo | null>(() => {
+    if (f.compararCom === "financiamento") {
+      const fin = financiamento(f.credito, f.prazoMeses, f.jurosMes, f.entradaFin);
+      return {
+        tipo: "financiamento",
+        jurosMes: f.jurosMes,
+        entrada: fin.entrada,
+        parcela: fin.parcela,
+        total: fin.total,
+      };
+    }
+    if (f.compararCom === "consorcio") {
+      // Sem a parcela da outra proposta o comparativo vira uma coluna de zeros.
+      if (f.outroParcela <= 0) return null;
+      const prazo = Math.max(1, Math.round(f.outroPrazo));
+      return {
+        tipo: "consorcio",
+        administradora: f.outroNome,
+        credito: f.outroCredito,
+        parcela: f.outroParcela,
+        prazoMeses: prazo,
+        total: Math.round(f.outroParcela * prazo * 100) / 100,
+      };
+    }
+    return null;
+  }, [
+    f.compararCom,
+    f.credito,
+    f.prazoMeses,
+    f.jurosMes,
+    f.entradaFin,
+    f.outroNome,
+    f.outroCredito,
+    f.outroParcela,
+    f.outroPrazo,
+  ]);
 
   const dados: DadosProposta = {
     marca: f.marca,
@@ -213,6 +284,8 @@ export default function Simulador() {
     taxaAdm: f.taxaAdm,
     fundoReserva: f.fundoReserva,
     lanceProprio: f.lanceProprio,
+    mostrarTaxas: f.mostrarTaxas,
+    mostrarSeguro: f.mostrarSeguro,
     vendedorNome: vendedor.nome,
     vendedorCargo: vendedor.cargo,
     vendedorTelefone: vendedor.telefone,
@@ -253,6 +326,7 @@ export default function Simulador() {
       mes_contemplacao: f.mesContemplacao,
       reducao: f.reducao,
       parcela: r.parcela,
+      parcela_manual: f.parcelaManual > 0 ? f.parcelaManual : null,
       total_pago: r.desembolso,
     });
   }
@@ -265,6 +339,7 @@ export default function Simulador() {
       segmento: s.segmento,
       credito: Number(s.credito),
       prazoMeses: s.prazo_meses,
+      parcelaManual: Number(s.parcela_manual ?? 0),
       taxaAdm: Number(s.taxa_adm),
       fundoReserva: Number(s.fundo_reserva),
       seguroMensal: Number(s.seguro_mensal),
@@ -308,30 +383,34 @@ export default function Simulador() {
       <div className="grid flex-1 gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_480px]">
         {/* ------------------------------ formulário ------------------------------ */}
         <div className="flex flex-col gap-4">
-          <Bloco titulo="Tabela">
+          <Bloco titulo="Plano">
             <div className="grid gap-3 sm:grid-cols-2">
               <Campo
-                label="Administradora e plano"
-                className="sm:col-span-2"
+                label="Administradora"
                 hint={
                   tabela
-                    ? `${tabela.prazo_meses} meses · adm ${pct(Number(tabela.taxa_adm), 1)} · FR ${pct(Number(tabela.fundo_reserva), 1)} · lance embutido até ${pct(Number(tabela.lance_embutido_max), 0)}`
-                    : "Nenhuma tabela cadastrada."
+                    ? `Tabela: ${tabela.prazo_meses} meses · adm ${pct(Number(tabela.taxa_adm), 1)} · FR ${pct(Number(tabela.fundo_reserva), 1)} · lance embutido até ${pct(Number(tabela.lance_embutido_max), 0)}`
+                    : "Sem tabela para essa combinação — ajuste as taxas à mão."
                 }
               >
-                <Select value={f.tabelaId} onChange={(e) => aplicarTabela(e.target.value)}>
-                  {tabelas.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.administradora} — {t.nome}
+                <Select
+                  value={f.administradora}
+                  onChange={(e) => aplicar(e.target.value, f.segmento)}
+                >
+                  {!administradoras.includes(f.administradora) && (
+                    <option value={f.administradora}>{f.administradora}</option>
+                  )}
+                  {administradoras.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
                     </option>
                   ))}
                 </Select>
               </Campo>
-
               <Campo label="Segmento">
                 <Select
                   value={f.segmento}
-                  onChange={(e) => set("segmento", e.target.value as Segmento)}
+                  onChange={(e) => aplicar(f.administradora, e.target.value as Segmento)}
                 >
                   {SEGMENTOS.map((s) => (
                     <option key={s.valor} value={s.valor}>
@@ -340,17 +419,7 @@ export default function Simulador() {
                   ))}
                 </Select>
               </Campo>
-              <Campo label="Administradora no papel">
-                <Input
-                  value={f.administradora}
-                  onChange={(e) => set("administradora", e.target.value)}
-                />
-              </Campo>
-            </div>
-          </Bloco>
 
-          <Bloco titulo="Plano">
-            <div className="grid gap-3 sm:grid-cols-2">
               <Campo
                 label="Crédito"
                 erro={foraDaFaixa ? "Fora da faixa desta tabela." : undefined}
@@ -369,6 +438,23 @@ export default function Simulador() {
                   sufixo="meses"
                 />
               </Campo>
+
+              <Campo
+                label="Parcela da tabela"
+                className="sm:col-span-2"
+                hint={
+                  f.parcelaManual > 0
+                    ? `Manda na simulação. Pelas taxas daria ${moedaExata(parcelaPelasTaxas)}.`
+                    : `Deixe 0 para calcular pelas taxas: ${moedaExata(parcelaPelasTaxas)}.`
+                }
+              >
+                <Numero
+                  valor={f.parcelaManual}
+                  aoMudar={(v) => set("parcelaManual", Math.max(0, v))}
+                  sufixo="R$"
+                />
+              </Campo>
+
               <Campo label="Taxa de administração" hint="Total do plano, sobre o crédito.">
                 <Numero valor={f.taxaAdm} aoMudar={(v) => set("taxaAdm", v)} sufixo="%" />
               </Campo>
@@ -424,20 +510,50 @@ export default function Simulador() {
             )}
           </Bloco>
 
-          <Bloco titulo="Comparativo com financiamento">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={f.compararFin}
-                onChange={(e) => set("compararFin", e.target.checked)}
-                className="h-4 w-4 rounded border-input"
-              />
-              Mostrar quanto sairia financiado
-            </label>
-            {f.compararFin && (
-              <div className="mt-3 max-w-[220px]">
+          <Bloco titulo="Comparativo">
+            <Campo label="Comparar com" className="max-w-[260px]">
+              <Select
+                value={f.compararCom}
+                onChange={(e) => set("compararCom", e.target.value as CompararCom)}
+              >
+                <option value="nada">— não comparar —</option>
+                <option value="financiamento">Financiamento</option>
+                <option value="consorcio">Outro consórcio</option>
+              </Select>
+            </Campo>
+
+            {f.compararCom === "financiamento" && (
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <Campo label="Entrada" hint="Sai do bolso no ato. Abate o valor financiado.">
+                  <Numero valor={f.entradaFin} aoMudar={(v) => set("entradaFin", v)} sufixo="R$" />
+                </Campo>
                 <Campo label="Juros do financiamento">
                   <Numero valor={f.jurosMes} aoMudar={(v) => set("jurosMes", v)} sufixo="% a.m." />
+                </Campo>
+              </div>
+            )}
+
+            {f.compararCom === "consorcio" && (
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <Campo label="Administradora" className="sm:col-span-2">
+                  <Input
+                    value={f.outroNome}
+                    onChange={(e) => set("outroNome", e.target.value)}
+                    placeholder="Quem fez a outra proposta"
+                  />
+                </Campo>
+                <Campo label="Crédito" hint="Deixe 0 se for o mesmo crédito.">
+                  <Numero valor={f.outroCredito} aoMudar={(v) => set("outroCredito", v)} sufixo="R$" />
+                </Campo>
+                <Campo label="Prazo">
+                  <Numero
+                    valor={f.outroPrazo}
+                    aoMudar={(v) => set("outroPrazo", Math.round(v))}
+                    sufixo="meses"
+                  />
+                </Campo>
+                <Campo label="Parcela" className="sm:col-span-2">
+                  <Numero valor={f.outroParcela} aoMudar={(v) => set("outroParcela", v)} sufixo="R$" />
                 </Campo>
               </div>
             )}
@@ -487,6 +603,28 @@ export default function Simulador() {
             </div>
 
             <p className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              O que aparece na imagem
+            </p>
+            <div className="flex flex-wrap gap-x-5 gap-y-2">
+              {(
+                [
+                  ["mostrarTaxas", "Taxa de adm. + fundo de reserva"],
+                  ["mostrarSeguro", "Seguro mensal"],
+                ] as const
+              ).map(([chave, rotulo]) => (
+                <label key={chave} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={f[chave]}
+                    onChange={(e) => set(chave, e.target.checked)}
+                    className="h-4 w-4 rounded border-input"
+                  />
+                  {rotulo}
+                </label>
+              ))}
+            </div>
+
+            <p className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Assinatura
             </p>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -523,16 +661,12 @@ export default function Simulador() {
         <div className="flex flex-col gap-3 xl:sticky xl:top-5 xl:self-start">
           <Cartao className="grid grid-cols-3 divide-x divide-border">
             {[
-              { r: "Parcela", v: moedaExata(r.parcela) },
+              { r: "Crédito", v: moeda(f.credito) },
               {
-                r: r.temLance ? "Após o lance" : "Total do plano",
-                v: r.temLance
-                  ? r.lanceQuita
-                    ? "quitado"
-                    : moedaExata(r.novaParcela)
-                  : moedaExata(r.totalPlano),
+                r: destaque.valor === null ? "Depois de contemplado" : destaque.rotulo,
+                v: destaque.valor === null ? destaque.nota! : moedaExata(destaque.valor),
               },
-              { r: "Custo ao mês", v: pct(r.custoMensalPct, 2) },
+              { r: "Total desembolsado", v: moeda(r.desembolso) },
             ].map((x) => (
               <div key={x.r} className="px-3 py-2.5 text-center">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{x.r}</p>
