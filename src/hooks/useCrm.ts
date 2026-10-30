@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
-import type { Contato, Etapa, Interacao, Origem, Usuario } from "@/lib/types";
+import type { Contato, Cota, Etapa, Interacao, Origem, Simulacao, Usuario } from "@/lib/types";
+import { exportarCrm } from "@/lib/exportarCrm";
 import { msgErro } from "@/lib/utils";
 
 export function useEtapas() {
@@ -278,6 +279,74 @@ export function useImportarContatos() {
     onSuccess: (_d, v) => {
       void qc.invalidateQueries({ queryKey: ["contatos"] });
       toast.success(`${v.length} contato(s) importado(s).`);
+    },
+    onError: (e) => toast.error(msgErro(e)),
+  });
+}
+
+/* -------------------------------- exportação ------------------------------- */
+
+const PAGINA = 1000;
+
+/**
+ * Lê a tabela inteira, em páginas.
+ *
+ * O PostgREST corta a resposta em mil linhas e não avisa: sem paginar, o dump
+ * pararia calado no milésimo registro e o usuário levaria a planilha incompleta
+ * achando que estava tudo lá. Ordena por `id` só para a paginação não repetir nem
+ * pular linha — a ordem de apresentação é resolvida depois, em memória.
+ */
+async function tudo<T>(tabela: string): Promise<T[]> {
+  const linhas: T[] = [];
+  for (let de = 0; ; de += PAGINA) {
+    const { data, error } = await supabase
+      .from(tabela)
+      .select("*")
+      .order("id")
+      .range(de, de + PAGINA - 1);
+    if (error) throw error;
+    linhas.push(...((data ?? []) as T[]));
+    if (!data || data.length < PAGINA) return linhas;
+  }
+}
+
+const porTexto = (a: string, b: string) => a.localeCompare(b, "pt-BR");
+const maisRecente = (a: string | null, b: string | null) => (b ?? "").localeCompare(a ?? "");
+
+/**
+ * Baixa o CRM inteiro numa planilha: contatos, histórico, simulações e cotas.
+ *
+ * Não filtra por usuário aqui porque o RLS já filtra no banco — cada um exporta
+ * exatamente o que enxerga na tela. Inclui os arquivados, que a tela esconde:
+ * num backup, o lead descartado é justamente o que não se quer perder.
+ */
+export function useExportarCrm() {
+  return useMutation({
+    mutationFn: async () => {
+      const [contatos, interacoes, simulacoes, cotas, etapas, origens, usuarios] =
+        await Promise.all([
+          tudo<Contato>("contatos"),
+          tudo<Interacao>("interacoes"),
+          tudo<Simulacao>("simulacoes"),
+          tudo<Cota>("cotas"),
+          tudo<Etapa>("etapas"),
+          tudo<Origem>("origens"),
+          tudo<Usuario>("usuarios"),
+        ]);
+
+      if (!contatos.length) return 0;
+
+      contatos.sort((a, b) => porTexto(a.nome, b.nome));
+      interacoes.sort((a, b) => maisRecente(a.data, b.data));
+      simulacoes.sort((a, b) => maisRecente(a.criado_em, b.criado_em));
+      cotas.sort((a, b) => maisRecente(a.data_venda, b.data_venda));
+
+      exportarCrm({ contatos, interacoes, simulacoes, cotas, etapas, origens, usuarios });
+      return contatos.length;
+    },
+    onSuccess: (n) => {
+      if (n === 0) toast.info("Não há contatos para exportar.");
+      else toast.success(`Planilha gerada com ${n} contato(s).`);
     },
     onError: (e) => toast.error(msgErro(e)),
   });

@@ -14,6 +14,7 @@ import {
 import {
   AlertTriangle,
   Download,
+  FileDown,
   LayoutGrid,
   MessageCircle,
   PhoneOff,
@@ -26,6 +27,7 @@ import {
 import {
   useContatos,
   useEtapas,
+  useExportarCrm,
   useImportarContatos,
   useMoverEtapa,
   useOrigens,
@@ -464,6 +466,7 @@ export default function Crm() {
   const { data: contatos = [], isLoading } = useContatos();
   const { data: usuarios = [] } = useUsuarios();
   const mover = useMoverEtapa();
+  const exportar = useExportarCrm();
 
   const [visao, setVisao] = React.useState<"kanban" | "lista">("kanban");
   const [busca, setBusca] = React.useState("");
@@ -551,6 +554,17 @@ export default function Crm() {
               <Rows3 className="h-3.5 w-3.5" /> Lista
             </button>
           </div>
+
+          {/* Fora do `editar`: exportar só lê, e quem abre o CRM já tem crm.ver. */}
+          <Botao
+            variante="contorno"
+            tamanho="sm"
+            onClick={() => exportar.mutate()}
+            carregando={exportar.isPending}
+            title="Baixa uma planilha com os contatos, o histórico, as simulações e as cotas."
+          >
+            <FileDown className="h-3.5 w-3.5" /> Exportar planilha
+          </Botao>
 
           {editar && (
             <>
